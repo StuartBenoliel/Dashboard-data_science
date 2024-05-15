@@ -20,6 +20,7 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 from statsmodels.stats.outliers_influence import OLSInfluence
 from scipy.stats import f
 import plotly.graph_objects as go
+import re
 
 # Obtenez les noms des colonnes
 column_names = data.columns.tolist()
@@ -45,6 +46,15 @@ init_value_var_x = (data[init_var_x].min(),
                        data[init_var_x].max())
 init_value_var_y = (data[init_var_y].min(), 
                        data[init_var_y].max())
+
+def extract_column_name(expression, data):
+            # Trouver tous les mots entre parenthèses
+            variables = re.findall(r'\((.*?)\)', expression)
+            # Vérifier si chaque mot est une colonne de data
+            for variable in variables:
+                if variable in data.columns:
+                    return variable
+            return expression
 
 # Add page title and sidebar
 app_ui = ui.page_navbar(
@@ -557,7 +567,46 @@ def server(input, output, session):
                         ), 
                         ui.output_ui("log_plot_card"),
                         ui.card(
-                            ui.card_header("Odds ratio (cotes):"),
+                            ui.card_header("Odds ratio (rapport de cotes):"),
+                            odds_ratios,
+                            full_screen=True
+                        ),
+
+                        col_widths=[6, 6],
+                )
+            elif "MNlogit" in reg():
+                model = reg()["MNlogit"]
+                return ui.layout_columns(
+                        ui.card(
+                            ui.card_header("Résumé statistique du modèle:"),
+                            ui.output_text_verbatim("summary_model"),
+                            full_screen=True
+                        ),
+                )
+            
+            elif "Poisson" in reg():
+                model = reg()["Poisson"]
+                odds_ratios = pd.DataFrame(
+                        {
+                            "OR": model.params,
+                            "Lower CI": model.conf_int()[0],
+                            "Upper CI": model.conf_int()[1],
+                        }
+                    )
+                odds_ratios = np.exp(odds_ratios)
+
+                odds_ratios= odds_ratios.style.set_table_styles(
+                [{'selector': 'td', 'props': [('padding', '5px 10px')]}]
+                )
+
+                return ui.layout_columns(
+                        ui.card(
+                            ui.card_header("Résumé statistique du modèle:"),
+                            ui.output_text_verbatim("summary_model"),
+                            full_screen=True
+                        ), 
+                        ui.card(
+                            ui.card_header("Odds ratio (rapport de cotes):"),
                             odds_ratios,
                             full_screen=True
                         ),
@@ -614,6 +663,14 @@ def server(input, output, session):
                     model = smf.logit(f'{input.equation()}', data=data_copy).fit()
                 if input.fc_liens() == "Probit":
                     model = smf.probit(f'{input.equation()}', data=data_copy).fit()
+                if input.fc_liens() == "Cloglog":
+                    model = smf.glm(f'{input.equation()}', 
+                                    family=sm.families.Binomial(sm.families.links.CLogLog()),
+                                    data=data_copy).fit()
+                if input.fc_liens() == "Loglog":
+                    model = smf.glm(f'{input.equation()}', 
+                                    family=sm.families.Binomial(sm.families.links.LogLog()),
+                                    data=data_copy).fit()
                 dico = {'Logist': model}
         
             elif input.type_loi() == "Multinomiale":
@@ -695,50 +752,35 @@ def server(input, output, session):
     def regplot():
         model = reg()['OLS']
         X = model.model.exog[:, 1:]
+        nom_x = model.model.exog_names[1]
         df = pd.DataFrame({
-            model.model.exog_names[1]: X.flatten(),
+            nom_x: X.flatten(),
             model.model.endog_names: model.model.endog
         })
-        x = np.arange(np.min(X), np.max(X), 0.1)
 
-        fig = px.scatter(df, x=model.model.exog_names[1], 
+        fig = px.scatter(df, x=nom_x, 
                          y=model.model.endog_names, trendline="ols")
         fig.update_traces(marker=dict(color='white', line=dict(color='black', width=1)))
         fig.update_traces(line=dict(color='black'))
 
-        # Calculer les intervalles de confiance de la droite de régression
-        conf_int = model.conf_int(alpha=0.05)
+        pred_ci = model.get_prediction().summary_frame(alpha=0.05)
 
-        # Ajouter l'intervalle de confiance de la droite de régression
-        fig.add_traces(go.Scatter(x=x, 
-                               y=conf_int.loc['Intercept', 0] + conf_int.loc[model.model.exog_names[1], 0] * x,
-                               mode='lines',
-                               line=dict(color='red', dash='dash'), opacity=0.5,
-                               name='IC droite de régression à 95%'))
-    
-        fig.add_traces(go.Scatter(x=x, 
-                                y=conf_int.loc['Intercept', 1] + conf_int.loc[model.model.exog_names[1], 1] * x,
-                                mode='lines',
-                                line=dict(color='red', dash='dash'), opacity=0.5,
-                                name='IC droite de régression à 95%',
-                                showlegend=False))
+        fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
+                         y=np.concatenate([pred_ci['mean_ci_upper'], pred_ci['mean_ci_lower'][::-1]]),
+                         opacity=0.3,
+                         fillcolor="red",
+                         name='IC régression à 95%',
+                         line=dict(color='red',dash='dash'),
+                         showlegend=True))
+        
 
-        # Calculer l'intervalle de confiance d'une valeur prédite
-        predict_ci = model.get_prediction().summary_frame(alpha=0.05)
-
-        # Ajouter l'intervalle de confiance d'une valeur prédite
-        fig.add_traces(go.Scatter(x=df[model.model.exog_names[1]], 
-                                y=predict_ci['obs_ci_lower'],
-                                mode='lines',
-                                line=dict(color='blue', dash='dash', width=1), opacity=0.5,
-                                name='IC valeur prédite à 95%'))
-
-        fig.add_traces(go.Scatter(x=df[model.model.exog_names[1]], 
-                                y=predict_ci['obs_ci_upper'],
-                                mode='lines',
-                                line=dict(color='blue', dash='dash', width=1), opacity=0.5,
-                                name='IC valeur prédite à 95%',
-                                showlegend=False))
+        fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
+                         y=np.concatenate([pred_ci['obs_ci_upper'], pred_ci['obs_ci_lower'][::-1]]),
+                         opacity=0.3,
+                         fillcolor="#3854A6",
+                         name='IC prédiction à 95%',
+                         line=dict(color="#3854A6",dash='dash'),
+                         showlegend=True))
 
         fig.update_layout(
                         template="plotly_white",
@@ -754,31 +796,45 @@ def server(input, output, session):
     
     @render_plotly
     def logplot():
+        from scipy.special import expit
         model = reg()['Logist']
         X = model.model.exog[:, 1:]
+        nom_x = model.model.exog_names[1]
         df = pd.DataFrame({
-            model.model.exog_names[1]: X.flatten(),
+            nom_x: X.flatten(),
             model.model.endog_names: model.model.endog
         })
-        df = df.sort_values(by=model.model.exog_names[1])
-        x = np.arange(np.min(X), np.max(X), 0.1)
-        p_hat = np.exp(model.params[0] + x * model.params[1]) / (1 + np.exp(model.params[0] + x * model.params[1]))
 
+        df = df.sort_values(by=nom_x)
         nb_bins = input.classe()
-        bin_edges = np.linspace(df[model.model.exog_names[1]].min(), df[model.model.exog_names[1]].max(), nb_bins + 1)
-        bins = pd.cut(df[model.model.exog_names[1]], bins=bin_edges, labels=False, include_lowest=True)
+        bin_edges = np.linspace(df[nom_x].min(), df[nom_x].max(), nb_bins + 1)
+        bins = pd.cut(df[nom_x], bins=bin_edges, labels=False, include_lowest=True)
         df['bin'] = bins
 
         # Calculer la moyenne de model.model.endog_names pour chaque bin
         means = df.groupby('bin')[model.model.endog_names].mean()
 
         data_emp = pd.DataFrame({
-            'borne_inf': [df[df['bin'] == i][model.model.exog_names[1]].min() for i in range(0, nb_bins)],
-            'borne_sup': [df[df['bin'] == i][model.model.exog_names[1]].max() for i in range(0, nb_bins)],
+            'borne_inf': [df[df['bin'] == i][nom_x].min() for i in range(0, nb_bins)],
+            'borne_sup': [df[df['bin'] == i][nom_x].max() for i in range(0, nb_bins)],
             'proportion': means.values
         })
-        fig = px.scatter(df, x=model.model.exog_names[1], y=model.model.endog_names)
-        fig.add_traces(go.Scatter(x=x, y=p_hat, name='Probabilité prédite', showlegend=True))
+
+        fig = px.scatter(df, x=nom_x, y=model.model.endog_names)
+
+        pred_ci = model.get_prediction().summary_frame(alpha=0.05)
+        pred_ci.columns = ['predicted', 'se', 'ci_lower', 'ci_upper']
+
+        fig.add_traces(go.Scatter(x=df[nom_x], y=pred_ci.predicted, name='Probabilité prédite'))
+        
+        fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
+                         y=np.concatenate([pred_ci.ci_upper, pred_ci.ci_lower[::-1]]),
+                         fill='toself', opacity=0.3,
+                         fillcolor="#3854A6",
+                         name="IC régression 95%",
+                         line=dict(dash='dash'),
+                         showlegend=True))
+
         fig.update_traces(line=dict(color="#3854A6"))
         fig.update_traces(marker=dict(color='white', line=dict(color='black', width=1)))
         fig.add_trace(go.Scatter(x=data_emp['borne_inf'], y=data_emp['proportion'], mode='markers', 
