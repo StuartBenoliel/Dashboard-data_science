@@ -378,7 +378,7 @@ def plot_histogram(df, x, bins, color):
 
     return fig
 
-def plot_violin(df, x, y, color):
+def plot_violin(df, x, y=None, color=None):
     return px.violin(
         df,
         x=x,

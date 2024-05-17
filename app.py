@@ -6,8 +6,8 @@ import statsmodels.formula.api as smf
 from shared import app_dir, data
 from shinywidgets import output_widget, render_plotly
 from shiny import App, reactive, render, ui
-import re
 
+import re
 from plots import *
 from texts import *
 from data_frame import *
@@ -17,18 +17,16 @@ column_names = data.columns.tolist()
 column_types = data.dtypes
 quantitative_vars = [col for col, dtype in zip(column_names, column_types) if dtype != "object"]
 qualitative_vars = [col for col, dtype in zip(column_names, column_types) if dtype == "object"]
-quant = {"Variable quantitative :": {col: col for col in quantitative_vars}}
-quali = {"Variable qualitative :": {col: col for col in qualitative_vars}}
+quant = {col: col for col in quantitative_vars}
+quali = {col: col for col in qualitative_vars}
 
 ICONS = {"ellipsis": fa.icon_svg("ellipsis")}
 
 init_var_x = column_names[0]
 init_var_y = column_names[1]
 
-init_value_var_x = (data[init_var_x].min(), 
-                       data[init_var_x].max())
-init_value_var_y = (data[init_var_y].min(), 
-                       data[init_var_y].max())
+init_value_var_x = (data[init_var_x].min(), data[init_var_x].max())
+init_value_var_y = (data[init_var_y].min(), data[init_var_y].max())
 
 def extract_column_name(expression, data):
     # Trouver tous les mots entre parenthèses
@@ -42,27 +40,22 @@ app_ui = ui.page_navbar(
     ui.nav_panel("Vue d'ensemble",
         ui.page_sidebar(
             ui.sidebar(
+                ui.input_file("file", "Upload a csv file", accept=".csv"),
                 ui.input_selectize("var_x", "Variable X:",
-                    {"1": quant, "2": quali}, selected=init_var_x
+                    {"Variable quantitative :": quant, "Variable qualitative :": quali}, selected=init_var_x
                 ),
-                ui.panel_conditional(f"{quantitative_vars}.includes(input.var_x)", 
-                    ui.input_slider("var_x_slider","Variable X range", min=init_value_var_x[0],
-                        max=init_value_var_x[1], value=init_value_var_x)
-                ),
+                ui.output_ui("slider_x"),
                 ui.input_selectize("var_y", "Variable Y:",
-                    {"1": quant, "2": quali}, selected=init_var_y
+                    {"Variable quantitative :": quant, "Variable qualitative :": quali}, selected=init_var_y
                 ),
-                ui.panel_conditional(f"{quantitative_vars}.includes(input.var_y)", 
-                    ui.input_slider("var_y_slider","Variable Y range", min=init_value_var_y[0],
-                        max=init_value_var_y[1], value=init_value_var_y)
-                ),
+                ui.output_ui("slider_y"),
                 ui.input_selectize("var_z", "Variable Catégorielle:",
-                    {"1" : {"" : None}, "2": quali}
+                    {"1" : {"" : None}, "Variable qualitative :": quali}
                 ),
                 ui.panel_conditional("input.var_z != '' ", 
                     ui.input_checkbox_group("var_z_modalite", "Modalités:", [], selected=[], inline=True)
                 ),
-                ui.input_action_button("reset", "Reset filter"),
+                ui.input_action_button("reset", "Reset"),
             ),
             ui.layout_columns(
                 ui.navset_card_underline(
@@ -98,7 +91,7 @@ app_ui = ui.page_navbar(
                     output_widget("scatterplot"), full_screen=True,
                 ),
                 ui.card(
-                    ui.card_header("Violinplot Variable X Vs Variable Y",
+                    ui.card_header("Violinplot Variable X Vs Variable Catégorielle",
                         ui.popover(ICONS["ellipsis"],
                             ui.input_radio_buttons("violin_color", None,
                                 ["Aucune"]+ qualitative_vars, inline=True,
@@ -141,88 +134,133 @@ app_ui = ui.page_navbar(
     title="Dashboard Data-Science", fillable=True
 )
 
-
 def server(input, output, session):
 
     # Nav_panel : Vue d'ensemble
-        
-    @reactive.effect
+    upload_state = reactive.value(False)
+
+    @render.ui
     @reactive.event(input.var_x)
-    def handle_variable_x_selection():
-        if input.var_x() in quantitative_vars:
-            min_value_x = data[input.var_x()].min()
-            max_value_x = data[input.var_x()].max()
-            ui.update_slider("var_x_slider", min=min_value_x, max=max_value_x, value=(min_value_x, max_value_x))
+    def slider_x():
+        if input.var_x() in type_var()["quant"]:
+            min_value_x = dataf()[input.var_x()].min()
+            max_value_x = dataf()[input.var_x()].max()
+            return ui.input_slider("var_x_slider", "Variable X range", min=min_value_x,
+                max=max_value_x, value=(min_value_x, max_value_x))
+
+    @render.ui
+    @reactive.event(input.var_y)
+    def slider_y():
+        if input.var_y() in type_var()["quant"]:
+            min_value_y = dataf()[input.var_y()].min()
+            max_value_y = dataf()[input.var_y()].max()
+            return ui.input_slider("var_y_slider", "Variable Y range", min=min_value_y,
+                max=max_value_y, value=(min_value_y, max_value_y))
 
     @reactive.effect
-    @reactive.event(input.var_y)
-    def handle_variable_y_selection():
-        if input.var_y() in quantitative_vars:
-            min_value_y = data[input.var_y()].min()
-            max_value_y = data[input.var_y()].max()
-            ui.update_slider("var_y_slider", min=min_value_y, max=max_value_y, value=(min_value_y, max_value_y))
+    @reactive.event(input.file)
+    def handle_file():
+        upload_state.set(True)
+        column_names = dataf().columns.tolist()
+        init_var_x = column_names[0]
+        init_var_y = column_names[1]
+        quant = {col: col for col in type_var()["quant"]}
+        quali = {col: col for col in type_var()["quali"]}
+        init_value_var_x = (dataf()[init_var_x].min(), dataf()[init_var_x].max())
+        init_value_var_y = (dataf()[init_var_y].min(), dataf()[init_var_y].max())
+
+        ui.update_selectize("var_x", choices= {"Variable quantitative :": quant, "Variable qualitative :": quali}, selected= init_var_x)
+        ui.update_slider("var_x_slider", min=init_value_var_x[0], max=init_value_var_x[1], value=init_value_var_x)
+        ui.update_selectize("var_y", choices= {"Variable quantitative :": quant, "Variable qualitative :": quali}, selected= init_var_y)
+        ui.update_slider("var_y_slider", min=init_value_var_y[0], max=init_value_var_y[1], value=init_value_var_y)
+        ui.update_selectize("var_z", choices= {"1" : {"" : None}, "Variable qualitative :": quali})
+        for color in ["histogram_color", "scatter_color", "violin_color"]:
+            ui.update_radio_buttons(color, choices= ["Aucune"]+ type_var()["quali"], selected='Aucune')
 
     @reactive.effect
     @reactive.event(input.var_z)
     def update_checkbox_options():
         if input.var_z():
-            checkbox_options = data[input.var_z()].unique().tolist()
+            checkbox_options = dataf()[input.var_z()].unique().tolist()
             ui.update_checkbox_group("var_z_modalite", choices=checkbox_options, selected=checkbox_options)
 
     @reactive.effect
     @reactive.event(input.reset)
     def _():
-        ui.update_selectize("var_x",selected=init_var_x)
+        upload_state.set(False)
+        ui.update_selectize("var_x", choices= {"Variable quantitative :": quant, "Variable qualitative :": quali},selected=init_var_x)
         ui.update_slider("var_x_slider", min=init_value_var_x[0], max=init_value_var_x[1],value=init_value_var_x)
-        ui.update_selectize("var_y",selected=init_var_y)
+        ui.update_selectize("var_y", choices= {"Variable quantitative :": quant, "Variable qualitative :": quali},selected=init_var_y)
         ui.update_slider("var_y_slider", min=init_value_var_y[0], max=init_value_var_y[1],value=init_value_var_y)
         ui.update_selectize("var_z",selected="")
         ui.update_checkbox_group("var_z_modalite", choices=[] , selected=[])
         for color in ["histogram_color", "scatter_color", "violin_color"]:
-            ui.update_radio_buttons(color, selected='Aucune')
+            ui.update_radio_buttons(color, choices= ["Aucune"]+ type_var()["quali"], selected='Aucune')
+    
+    @reactive.calc
+    def dataf():
+        if upload_state.get():
+            df = pd.read_csv(input.file()[0]['datapath'])
+        else:   
+            df = data
+        return df
+    
+    @reactive.calc
+    def type_var():
+        df = dataf()
+        column_names = df.columns.tolist()
+        column_types = df.dtypes
+        quantitative_vars = [col for col, dtype in zip(column_names, column_types) if dtype != "object"]
+        qualitative_vars = [col for col, dtype in zip(column_names, column_types) if dtype == "object"]
+        return {"quant": quantitative_vars, "quali" : qualitative_vars}
         
     @reactive.calc
-    def data_filtre():
-        idx1 = pd.Series(True, index=data.index)
-        idx2 = pd.Series(True, index=data.index)
-        idx3 = pd.Series(True, index=data.index)
+    def dataf_filtre():
+        idx1 = pd.Series(True, index=dataf().index)
+        idx2 = pd.Series(True, index=dataf().index)
+        idx3 = pd.Series(True, index=dataf().index)
 
-        if input.var_x() in quantitative_vars:
+        if input.var_x() in type_var()["quant"]:
             var_x_range = input.var_x_slider()
-            idx1 = data[input.var_x()].between(var_x_range[0], var_x_range[1])
+            idx1 = dataf()[input.var_x()].between(var_x_range[0], var_x_range[1])
 
-        if input.var_y() in quantitative_vars:
+        if input.var_y() in type_var()["quant"]:
             var_y_range = input.var_y_slider()
-            idx2 = data[input.var_y()].between(var_y_range[0], var_y_range[1])
+            idx2 = dataf()[input.var_y()].between(var_y_range[0], var_y_range[1])
 
-        if input.var_z():
-            idx3 = data[input.var_z()].isin(input.var_z_modalite())
+        if input.var_z() in type_var()["quali"]:
+            idx3 = dataf()[input.var_z()].isin(input.var_z_modalite())
 
-        return data[idx1 & idx2 & idx3]
+        return dataf()[idx1 & idx2 & idx3]
     
     @render.data_frame
     def table():
-        return render.DataGrid(data_filtre(), filters=True)
+        return render.DataGrid(dataf_filtre(), filters=True)
 
     @render.data_frame
     def summary_table():
-        return render.DataGrid(table_summary(data_filtre()))
+        return render.DataGrid(table_summary(dataf()))
     
     @render_plotly
     def corrplot():
-        return plot_corr(data[quantitative_vars], quantitative_vars)
+        return plot_corr(dataf()[type_var()["quant"]], type_var()["quant"])
 
     @render_plotly
     def scatterplot():
-        return plot_scatter(data_filtre(), input.var_x(), input.var_y(), input.scatter_color())
+        if input.var_x() in dataf_filtre().columns.tolist() and input.var_y() in dataf_filtre().columns.tolist():
+            return plot_scatter(dataf_filtre(), input.var_x(), input.var_y(), input.scatter_color())
     
     @render_plotly
     def histogram():
-        return plot_histogram(data_filtre(), input.var_x(), input.bins(), input.histogram_color())
+        if input.var_x() in dataf_filtre().columns.tolist() and input.var_y() in dataf_filtre().columns.tolist():
+            return plot_histogram(dataf_filtre(), input.var_x(), input.bins(), input.histogram_color())
     
     @render_plotly
     def violinplot():
-        return plot_violin(data_filtre(), input.var_x(), input.var_y(), input.violin_color())
+        if input.var_x() in dataf_filtre().columns.tolist():
+            if input.var_z() in dataf_filtre().columns.tolist():
+                return plot_violin(dataf_filtre(), input.var_x(), input.var_z(), input.violin_color())
+            return plot_violin(dataf_filtre(), input.var_x(), color = input.violin_color())
         
     # Nav_panel : Régression
 
@@ -284,6 +322,7 @@ def server(input, output, session):
                     output_widget("levierplot"), full_screen=True
                 ),
                 ui.navset_card_underline(
+                    ui.nav_panel("Influence", ui.output_text_verbatim("influence")),
                     ui.nav_panel("Distance de Cook", output_widget("cookplot")),
                     ui.nav_panel("Mesure DFFITS", output_widget("dffitsplot")),
                     title="Mesure d'influence",
@@ -310,7 +349,7 @@ def server(input, output, session):
                         ui.card_header("Courbe:"),
                         output_widget("logplot"),
                         ui.input_slider("classe", "Nombre de classes:",
-                            min=1, max=20, value=5
+                            min=1, max=10, value=5
                         ), full_screen=True
                     )
                 ),
@@ -333,12 +372,12 @@ def server(input, output, session):
     def reg():
         try:
             if input.type_reg() == "Régression linéaire":
-                model = smf.ols(f'{input.equation()}', data=data).fit()
+                model = smf.ols(f'{input.equation()}', data=dataf()).fit()
                 dico = {'OLS': model}
             else:
-                data_copy = data.copy()
+                data_copy = dataf().copy()
                 var_y = input.equation().split('~')[0].strip()
-                data_copy[var_y] = data[var_y].astype('category').cat.codes
+                data_copy[var_y] = dataf()[var_y].astype('category').cat.codes
 
                 if input.type_loi() == "Bernoulli":
                     if input.fc_liens() == "Logit":

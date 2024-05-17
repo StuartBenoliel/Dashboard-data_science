@@ -11,7 +11,7 @@ def text_vif():
     augmentée en raison de la corrélation entre les variables indépendantes. 
     Un VIF supérieur à 10 est souvent considéré comme indiquant une colinéarité 
     problématique (on ne considère pas le VIF de l'intercept).
-    """.replace('\n        ', '\n')
+    """.replace('\n    ', '\n')
     return explanation.strip()
 
 
@@ -24,9 +24,9 @@ def text_levier():
     aberrante. En fait, un point levier est atypique au niveau des variables 
     explicatives et l’on doit se poser la question de la considération d’un tel 
     point : erreur de mesure, inhomogénéité de la population, ...
-    """.replace('\n        ', '\n')
+    """.replace('\n    ', '\n')
     return explanation.strip()
-
+    
 def text_influence():
     explanation = """
     Un point influent est un point qui exerce une influence significative sur 
@@ -38,7 +38,7 @@ def text_influence():
     Une distance de Cook / Mesure DFFITS importante peut être le résultat soit 
     d’un résidu standardisé grand (point aberrant), soit d’un levier 
     important, soit des deux.
-    """.replace('\n        ', '\n')
+    """.replace('\n    ', '\n')
     return explanation.strip()
 
 
@@ -68,7 +68,7 @@ def text_test_linearity(dict_reg):
         (généralement 0.05), cela suggère que la régression pourrait ne 
         pas être correctement spécifiée.
         """.replace('\n        ', '\n')
-
+        
         rainbow_result = f"""
         Résultat du test Rainbow:
         Statistique du test: {rainbow_test[0]}

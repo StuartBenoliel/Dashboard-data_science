@@ -5,11 +5,10 @@ from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 def table_summary(df):
-  summary = df.describe().transpose()
-  summary['Variable'] = summary.index
-  summary = summary[['Variable'] + [col for col in summary.columns if col != 'Variable']]
+  summary = df.describe()
+  summary['Variables'] = summary.index
+  summary = summary[['Variables'] + [col for col in summary.columns if col != 'Variables']]
   return summary
-
 
 def table_box(dict_reg):
   model = dict_reg['OLS']
@@ -21,7 +20,6 @@ def table_box(dict_reg):
   })
   return test_df
     
-
 def table_vif(dict_reg):
   model = dict_reg['OLS']
   X = model.model.exog
@@ -33,11 +31,11 @@ def table_vif(dict_reg):
 def table_odds(dict_reg):
   model = list(dict_reg.values())[0]
   odds_ratios = pd.DataFrame(
-          {
-              "OR": model.params,
-              "Lower CI": model.conf_int()[0],
-              "Upper CI": model.conf_int()[1],
-          }
-      )
+    {
+      "OR": model.params,
+      "Lower CI": model.conf_int()[0],
+      "Upper CI": model.conf_int()[1],
+    }
+  )
   odds_ratios = np.exp(odds_ratios)
   return odds_ratios
