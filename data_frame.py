@@ -23,19 +23,22 @@ def table_box(dict_reg):
 def table_vif(dict_reg):
   model = dict_reg['OLS']
   X = model.model.exog
-  vif = pd.DataFrame()
-  vif['VIF'] = [variance_inflation_factor(X, i) for i in range(X.shape[1])]
-  vif['variable'] = model.model.exog_names
-  return vif
+  vif = pd.DataFrame(
+    {
+      'Variable': model.model.exog_names,
+      'VIF': [variance_inflation_factor(X, i) for i in range(X.shape[1])],
+    }
+  )
+  return vif.iloc[1:]
 
 def table_odds(dict_reg):
   model = list(dict_reg.values())[0]
   odds_ratios = pd.DataFrame(
     {
-      "OR": model.params,
-      "Lower CI": model.conf_int()[0],
-      "Upper CI": model.conf_int()[1],
+      'Variable': model.model.exog_names,
+      "OR": np.exp(model.params),
+      "Lower CI": np.exp(model.conf_int()[0]),
+      "Upper CI": np.exp(model.conf_int()[1]),
     }
   )
-  odds_ratios = np.exp(odds_ratios)
-  return odds_ratios
+  return odds_ratios.iloc[1:]

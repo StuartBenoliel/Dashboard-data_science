@@ -3,7 +3,6 @@ import numpy as np
 import scipy.stats as stats
 from scipy.stats import f
 import math
-from statsmodels.stats.outliers_influence import OLSInfluence
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from statsmodels.graphics.tsaplots import plot_acf
@@ -13,62 +12,104 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 
+import re
 
-def plot_reg(dict_reg):
+def extract_elements(expression):
+    # Utilise une expression régulière pour capturer les éléments entre les opérateurs *
+    pattern = re.compile(r'(\w+)\s*\*{1,2}\s*(\w+)')
+    matches = pattern.findall(expression)
+    
+    # Aplatir la liste de tuples en une liste de chaînes de caractères
+    elements = [item for sublist in matches for item in sublist]
+    if len(elements) == 0:
+        return [expression]
+    return elements
+
+def extract_column_name(expression, data):
+    # Trouver tous les mots entre parenthèses
+    variables = re.findall(r'\((.*?)\)', expression)
+    if len(variables) == 0:
+        variables = expression
+    else:
+        variables = variables[0]
+    variables = extract_elements(variables)
+    for variable in variables:
+        if variable in data.columns:
+            return variable
+    return expression
+
+def plot_reg(dict_reg, data, transfo):
     if "OLS" in dict_reg:
         model = dict_reg['OLS']
-        X = model.model.exog[:, 1:]
-        if X.shape[1] == 1:
-            nom_x = model.model.exog_names[1]
-            df = pd.DataFrame({
-                nom_x: X.flatten(),
-                model.model.endog_names: model.model.endog
-            })
-
-            fig = px.scatter(df, x=nom_x, 
-                            y=model.model.endog_names, trendline="ols")
-            fig.update_traces(marker=dict(color='white', line=dict(color='black', width=1)))
-            fig.update_traces(line=dict(color='black'))
-
-            pred_ci = model.get_prediction().summary_frame(alpha=0.05)
-
-            fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
-                            y=np.concatenate([pred_ci['mean_ci_upper'], pred_ci['mean_ci_lower'][::-1]]),
-                            fillcolor="red",
-                            name='IC régression à 95%',
-                            line=dict(color='red',dash='dash'),
-                            showlegend=True))
-            
-            fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
-                            y=np.concatenate([pred_ci['obs_ci_upper'], pred_ci['obs_ci_lower'][::-1]]),
-                            fillcolor="#3854A6",
-                            name='IC prédiction à 95%',
-                            line=dict(color="#3854A6",dash='dash'),
-                            showlegend=True))
-
-            fig.update_layout(
-                            template="plotly_white",
-                            legend=dict(
-                            orientation="h",
-                            x=0.5,
-                            y=1.1,
-                            xanchor='center',
-                            yanchor='middle'
-                        ))
-
-            return fig
-    
-
-def plot_log(dict_reg, bins):
-    if any(value in dict_reg.keys() for value in ['Logist', 'Poisson', 'Bin_neg']):
-        model = list(dict_reg.values())[0]
-        X = model.model.exog[:, 1:]
+        X = model.model.exog[:, 1:2]
         nom_x = model.model.exog_names[1]
         df = pd.DataFrame({
             nom_x: X.flatten(),
             model.model.endog_names: model.model.endog
         })
 
+        if not transfo:
+            nom_x = extract_column_name(nom_x, data)
+            df = pd.DataFrame({
+                nom_x: data[nom_x],
+                model.model.endog_names: model.model.endog
+            })
+        fig = px.scatter(df, x=nom_x, y=model.model.endog_names)
+
+        fig.add_trace(go.Scatter(x=df[nom_x],
+                        y=model.fittedvalues,
+                        name='OLS',
+                        showlegend=True))
+        
+        fig.update_traces(marker=dict(color='white', line=dict(color='black', width=1)))
+        fig.update_traces(line=dict(color='black'))
+
+        pred_ci = model.get_prediction().summary_frame(alpha=0.05)
+
+        fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
+                        y=np.concatenate([pred_ci['mean_ci_upper'], pred_ci['mean_ci_lower'][::-1]]),
+                        fill='toself', opacity=0.3,
+                        fillcolor="#F24B4B",
+                        name='IC régression à 95%',
+                        line=dict(color='#F24B4B',dash='dash'),
+                        showlegend=True))
+        
+        fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
+                        y=np.concatenate([pred_ci['obs_ci_upper'], pred_ci['obs_ci_lower'][::-1]]),
+                        fill='toself', opacity=0.3,
+                        fillcolor="#3854A6",
+                        name='IC prédiction à 95%',
+                        line=dict(color="#3854A6",dash='dash'),
+                        showlegend=True))
+
+        fig.update_layout(
+                        template="plotly_white",
+                        legend=dict(
+                        orientation="h",
+                        x=0.5,
+                        y=1.1,
+                        xanchor='center',
+                        yanchor='middle'
+                    ))
+
+        return fig
+    
+
+def plot_log(dict_reg, data, bins, transfo):
+    if any(value in dict_reg.keys() for value in ['Logist', 'Poisson', 'Bin_neg']):
+        model = list(dict_reg.values())[0]
+        X = model.model.exog[:, 1:2]
+        nom_x = model.model.exog_names[1]
+        df = pd.DataFrame({
+            nom_x: X.flatten(),
+            model.model.endog_names: model.model.endog
+        })
+        if not transfo:
+                nom_x = extract_column_name(nom_x, data)
+                df = pd.DataFrame({
+                    nom_x: data[nom_x],
+                    model.model.endog_names: model.model.endog
+                })
         df = df.sort_values(by=nom_x)
         nb_bins = bins
         bin_edges = np.linspace(df[nom_x].min(), df[nom_x].max(), nb_bins + 1)
@@ -139,7 +180,7 @@ def plot_linear(dict_reg):
         fig, ax = plt.subplots()
         ax.scatter(fitted_values, residuals, edgecolors='k', alpha=0.6)
         ax.plot(local[:,0], local[:,1], color = 'black')
-        ax.axhline(y=0, color='r', linestyle='--')
+        ax.axhline(y=0, color = 'r', linestyle= "--")
         ax.set(xlabel='Values ajustées / Fitted Values', 
                 ylabel='Résidus / Residuals')
         
@@ -147,25 +188,34 @@ def plot_linear(dict_reg):
     
 
 def plot_normal(dict_reg):
-    if "OLS" in dict_reg:
-        model = dict_reg['OLS']
-        studentized_residuals = model.get_influence().resid_studentized_external
+    if any(value in dict_reg.keys() for value in ['OLS' ,'Logist']):
+        model = list(dict_reg.values())[0]
+        if "OLS" in dict_reg:
+            residuals = model.get_influence().resid_studentized_external
+        else :
+            try:
+                residuals = stats.zscore(model.resid_dev)
+            except Exception as e:
+                residuals = stats.zscore(model.resid_deviance)
         
         fig = plt.figure()
         gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1])
         # QQ plot des résidus standardisés
         ax0 = plt.subplot(gs[0, 0])
-        stats.probplot(studentized_residuals, dist="norm", plot=ax0)
-        ax0.set_title('Normal Q-Q Plot des résidus studentisés')
+        (res, fit) = stats.probplot(residuals, dist="norm")
+        ax0.scatter(res[0], res[1], edgecolors='k', alpha=0.6)
+        ax0.plot(res[0], fit[0] * res[0] + fit[1], 'r--', lw=2)
+        ax0.set_title('Normal Q-Q Plot des résidus studentisés' if "OLS" in dict_reg else "Normal Q-Q Plot résidus déviance standardisés")
         ax0.set(xlabel='Quantiles théoriques', 
                 ylabel='Quantiles observés')
         # Histogramme des résidus standardisés avec estimation de densité
         ax1 = plt.subplot(gs[0, 1])
-        sns.histplot(studentized_residuals, kde=True, ax=ax1, bins=30, edgecolor='k', alpha=0.6)
-        ax1.set(xlabel='Résidus studentisés / Studentized Residuals par VC', 
+        sns.histplot(residuals, kde=True, ax=ax1, bins=30, edgecolor='k', alpha=0.6)
+        ax1.set(xlabel='Résidus studentisés par VC' if "OLS" in dict_reg else "Résidu de déviance standardisé", 
                 ylabel='Fréquence')
         
         return fig
+
 
 def plot_homo_1(dict_reg):
     if "OLS" in dict_reg:
@@ -239,32 +289,40 @@ def plot_auto(dict_reg):
         return fig
 
 def plot_aberrant(dict_reg):
-    if "OLS" in dict_reg:
-        model = dict_reg['OLS']
+    if any(value in dict_reg.keys() for value in ['OLS' ,'Logist']):
+        model = list(dict_reg.values())[0]
         n = model.model.exog.shape[0]
         x = np.linspace(1, n, n)
         y = np.repeat(2, n)
-        studentized_residuals = model.get_influence().resid_studentized_external
-        local = lowess(studentized_residuals, x)
+        if "OLS" in dict_reg:
+            residuals = model.get_influence().resid_studentized_external
+        else :
+            try:
+                residuals = stats.zscore(model.resid_dev)
+            except Exception as e:
+                residuals = stats.zscore(model.resid_deviance)
+        local = lowess(residuals, x)
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=x, y=studentized_residuals, mode='markers', marker=dict(color='white', line=dict(color='black', width=1)), showlegend=False, name=''))
+        fig.add_trace(go.Scatter(x=x, y=residuals, mode='markers', marker=dict(color='white', line=dict(color='black', width=1)), showlegend=False, name=''))
         fig.add_trace(go.Scatter(x=x, y=y, mode='lines', line=dict(color='red', dash='dash'), showlegend=False, name=''))
         fig.add_trace(go.Scatter(x=x, y=-y, mode='lines', line=dict(color='red', dash='dash'), showlegend=False, name=''))
         fig.add_trace(go.Scatter(x=local[:, 0], y=local[:, 1], mode='lines', line=dict(color='black'), showlegend=False, name=''))
         fig.update_layout(
                         xaxis_title="Individu",
-                        yaxis_title="Résidu studentisé par VC",
+                        yaxis_title="Résidu studentisé par VC" if "OLS" in dict_reg else "Résidu de déviance standardisé",
                         template="plotly_white")
-
         return fig
 
 def plot_levier(dict_reg):
-    if "OLS" in dict_reg:
-        model = dict_reg['OLS']
+    if any(value in dict_reg.keys() for value in ['OLS' ,'Logist']):
+        model = list(dict_reg.values())[0]
         n = model.model.exog.shape[0]
         x = np.linspace(1,n,n)
-        hii = OLSInfluence(model).hat_diag_factor
+        if "OLS" in dict_reg:
+            hii = model.get_influence().hat_diag_factor
+        else :
+            hii = model.get_influence().hat_matrix_exog_diag
         yhw = np.repeat(2*len(model.model.exog_names)/n,n)
 
         fig = go.Figure()
@@ -285,8 +343,8 @@ def plot_levier(dict_reg):
         return fig
 
 def plot_cook(dict_reg):
-    if "OLS" in dict_reg:
-        model = dict_reg['OLS']
+    if any(value in dict_reg.keys() for value in ['OLS' ,'Logist']):
+        model = list(dict_reg.values())[0]
         n = model.model.exog.shape[0]
         x = np.linspace(1,n,n)
         deg_freedom1 = len(model.model.exog_names)
@@ -295,7 +353,7 @@ def plot_cook(dict_reg):
         quantile_b = f.ppf(0.5, deg_freedom1, deg_freedom2)
         yok = np.repeat(quantile, n)
         yok_b = np.repeat(quantile_b, n)
-        cd, _ = OLSInfluence(model).cooks_distance 
+        cd, _ = model.get_influence().cooks_distance 
 
         fig = go.Figure()
         fig.add_trace(go.Bar(x=x, y=cd,showlegend=False, name=''))
@@ -320,7 +378,7 @@ def plot_dffits(dict_reg):
         model = dict_reg['OLS']
         n = model.model.exog.shape[0]
         x = np.linspace(1,n,n)
-        obs, dffits_seuil = OLSInfluence(model).dffits
+        obs, dffits_seuil = model.get_influence().dffits
         yok = np.repeat(dffits_seuil,n)
 
         fig = go.Figure()
@@ -354,12 +412,13 @@ def plot_corr(df, nom_vars):
     
     return fig
 
-def plot_scatter(df, x, y, color):
+def plot_scatter(df, x, y, color, smoother):
     return px.scatter(
         df,
         x=x,
         y=y,
         color=None if color == "Aucune" else color,
+        trendline="lowess" if smoother else None,
         template="plotly_white",
     )
 

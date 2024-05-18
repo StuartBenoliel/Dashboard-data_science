@@ -28,9 +28,25 @@ init_var_y = column_names[1]
 init_value_var_x = (data[init_var_x].min(), data[init_var_x].max())
 init_value_var_y = (data[init_var_y].min(), data[init_var_y].max())
 
+def extract_elements(expression):
+    # Utilise une expression régulière pour capturer les éléments entre les opérateurs *
+    pattern = re.compile(r'(\w+)\s*\*{1,2}\s*(\w+)')
+    matches = pattern.findall(expression)
+    
+    # Aplatir la liste de tuples en une liste de chaînes de caractères
+    elements = [item for sublist in matches for item in sublist]
+    if len(elements) == 0:
+        return [expression]
+    return elements
+
 def extract_column_name(expression, data):
     # Trouver tous les mots entre parenthèses
     variables = re.findall(r'\((.*?)\)', expression)
+    if len(variables) == 0:
+        variables = expression
+    else:
+        variables = variables[0]
+    variables = extract_elements(variables)
     for variable in variables:
         if variable in data.columns:
             return variable
@@ -40,7 +56,7 @@ app_ui = ui.page_navbar(
     ui.nav_panel("Vue d'ensemble",
         ui.page_sidebar(
             ui.sidebar(
-                ui.input_file("file", "Upload a csv file", accept=".csv"),
+                ui.input_file("file", "Upload a csv file", accept=[".csv", ".txt"]),
                 ui.input_selectize("var_x", "Variable X:",
                     {"Variable quantitative :": quant, "Variable qualitative :": quali}, selected=init_var_x
                 ),
@@ -76,9 +92,7 @@ app_ui = ui.page_navbar(
                         ), class_="d-flex justify-content-between align-items-center"
                     ),
                     output_widget("histogram"),
-                    ui.panel_conditional(f"{quantitative_vars}.includes(input.var_x)", 
-                        ui.input_slider("bins", "Nombre de bins:", min=1, max=30, value=15)
-                    ), full_screen=True
+                    ui.output_ui("bins"), full_screen=True
                 ),
                 ui.card(
                     ui.card_header("Scatterplot Variable X vs Variable Y",
@@ -88,7 +102,8 @@ app_ui = ui.page_navbar(
                             ), title="Couleur:",
                         ), class_="d-flex justify-content-between align-items-center",
                     ),
-                    output_widget("scatterplot"), full_screen=True,
+                    output_widget("scatterplot"), 
+                    ui.input_checkbox("smoother", "Ajouter LOWESS"), full_screen=True,
                 ),
                 ui.card(
                     ui.card_header("Violinplot Variable X Vs Variable Catégorielle",
@@ -107,13 +122,13 @@ app_ui = ui.page_navbar(
     ui.nav_panel("Régression", 
         ui.layout_columns(
             ui.input_selectize("type_reg", "Type de régression:",
-                ["Régression linéaire", "Régression logistique"], selected="Régression linéaire"
+                ["Régression linéaire", "Modèles linéaires généralisés (GLM)"], selected="Régression linéaire"
             ),
             ui.tooltip(
                 ui.input_text("equation", "Entrer l'équation:", " ~ "), 
-                "Exemple : Y  ~ np.log(X_1) + X_2 + np.square(X_2)", placement="right"
+                "Exemple : Y  ~ np.log(X_1) + standardize(X_2) + I(X_3**2)", placement="right"
             ),
-            ui.panel_conditional("input.type_reg === 'Régression logistique' ", 
+            ui.panel_conditional("input.type_reg === 'Modèles linéaires généralisés (GLM)' ", 
                 ui.layout_columns(
                     ui.input_selectize("type_loi", "Loi du model:",
                         {"1" : {"Variable binaire" : {"Bernoulli" : "Bernoulli"}}, 
@@ -122,8 +137,7 @@ app_ui = ui.page_navbar(
                         }, selected = "Bernoulli"
                     ),
                     ui.input_selectize("fc_liens", "Fonctions de liens:",
-                        {"Logit": "Logit", "Probit": "Probit", "Cloglog": "Cloglog", "Loglog": "Loglog"},
-                        selected = "Logit"
+                        {"Logit": "Logit (régression logistique)", "Probit": "Probit", "Cloglog": "Cloglog", "Loglog": "Loglog"},
                     ),
                 )
             ),
@@ -156,12 +170,19 @@ def server(input, output, session):
             max_value_y = dataf()[input.var_y()].max()
             return ui.input_slider("var_y_slider", "Variable Y range", min=min_value_y,
                 max=max_value_y, value=(min_value_y, max_value_y))
+        
+    @render.ui
+    @reactive.event(input.var_x)
+    def bins():
+        if input.var_x() in type_var()["quant"]:
+            return ui.input_slider("bins", "Nombre de bins:", min=1, max=30, value=15)
 
     @reactive.effect
     @reactive.event(input.file)
     def handle_file():
         upload_state.set(True)
         column_names = dataf().columns.tolist()
+        print(column_names)
         init_var_x = column_names[0]
         init_var_y = column_names[1]
         quant = {col: col for col in type_var()["quant"]}
@@ -200,7 +221,12 @@ def server(input, output, session):
     @reactive.calc
     def dataf():
         if upload_state.get():
-            df = pd.read_csv(input.file()[0]['datapath'])
+            sep = [" ", ";", "\t", ","]
+            i = 0
+            df = pd.read_csv(input.file()[0]['datapath'], sep=sep[i])
+            while len(df.columns.tolist()) == 1:
+                i+=1
+                df = pd.read_csv(input.file ()[0]['datapath'], sep=sep[i])
         else:   
             df = data
         return df
@@ -248,7 +274,7 @@ def server(input, output, session):
     @render_plotly
     def scatterplot():
         if input.var_x() in dataf_filtre().columns.tolist() and input.var_y() in dataf_filtre().columns.tolist():
-            return plot_scatter(dataf_filtre(), input.var_x(), input.var_y(), input.scatter_color())
+            return plot_scatter(dataf_filtre(), input.var_x(), input.var_y(), input.scatter_color(), input.smoother())
     
     @render_plotly
     def histogram():
@@ -267,20 +293,26 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.type_loi)
     def handle_lien_selection():
-        if input.type_loi() == "Binomiale":
+        if input.type_loi() == "Bernoulli":
             ui.update_selectize("fc_liens", 
-                choices = {"Logit": "Logit", "Probit": "Probit", "Cloglog": "Cloglog", "Loglog": "Loglog"},
-                selected = "Logit")
+                choices = {"Logit": "Logit (régression logistique)", "Probit": "Probit", "Cloglog": "Cloglog", "Loglog": "Loglog"})
         if input.type_loi() == "Multinomiale":
-            ui.update_selectize("fc_liens", choices = {"Logit": "Logit"}, selected = "Logit")
+            ui.update_selectize("fc_liens", choices = {"Logit": "Logit (régression logistique)"})
         if input.type_loi() in ["Poisson" , "Binomiale négative"]:
-            ui.update_selectize("fc_liens", choices = {"?": "?"}, selected = "?")
+            ui.update_selectize("fc_liens", choices = {"Log": "Log (régression log-linéaire)"})
     
     @render.ui  
     def reg_card():
         if "OLS" in reg():
             model = reg()['OLS']
-            X = model.model.exog[:, 1:]
+            X = set(extract_column_name(expression, data) for expression in model.model.exog_names[1:])
+            if len(model.model.exog_names[1:]) > 1:
+                T_F = 0
+            else:
+                nom_x = model.model.exog_names[1]
+                nom_x_b = extract_column_name(nom_x, data)
+                T_F = int(nom_x != nom_x_b)
+
             return ui.layout_columns(
                 ui.card(
                     ui.card_header("Résumé statistique du modèle:"),
@@ -325,39 +357,79 @@ def server(input, output, session):
                     ui.nav_panel("Influence", ui.output_text_verbatim("influence")),
                     ui.nav_panel("Distance de Cook", output_widget("cookplot")),
                     ui.nav_panel("Mesure DFFITS", output_widget("dffitsplot")),
-                    title="Mesure d'influence",
+                    title="Mesure d'influence"
                 ),
-                ui.panel_conditional(f"{X.shape[1]} === 1", 
+                ui.panel_conditional(f"{len(X)} === 1", 
                     ui.card(
                         ui.card_header("Courbe:"),
-                        output_widget("regplot"), full_screen=True
-                    )
+                        output_widget("regplot"),
+                        ui.panel_conditional(f"{T_F} === 1 ", 
+                            ui.input_checkbox("transfo", "Transformation axe")
+                        ), full_screen=True
+                    ),
                 ),
                 col_widths=[6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
             )
         
         elif any(value in reg() for value in ["Logist", "Poisson", "Bin_neg"]):
             model = list(reg().values())[0]
-            X = model.model.exog[:, 1:]
+            X = set(extract_column_name(expression, data) for expression in model.model.exog_names[1:])
+            if len(model.model.exog_names[1:]) > 1:
+                T_F = False
+            else:
+                nom_x = model.model.exog_names[1]
+                nom_x_b = extract_column_name(nom_x, data)
+                T_F = (nom_x != nom_x_b)
+            #mfx = model.get_margeff()
+            #print(mfx.summary())
             return ui.layout_columns(
-                ui.card(
-                    ui.card_header("Résumé statistique du modèle:"),
-                    ui.output_text_verbatim("summary_model"), full_screen=True
-                ), 
-                ui.panel_conditional(f"{X.shape[1]} === 1", 
+                ui.navset_card_underline(
+                    ui.nav_panel("Résumé", ui.output_text_verbatim("summary_model"), 
+                        ui.output_text_verbatim("test_model")),
+                    ui.nav_panel("Odds ratio", ui.output_data_frame("odds_table")),
+                    title="Résultats du modèle:"
+                ),
+                ui.panel_conditional(f"{len(X)} === 1", 
                     ui.card(
                         ui.card_header("Courbe:"),
                         output_widget("logplot"),
-                        ui.input_slider("classe", "Nombre de classes:",
-                            min=1, max=10, value=5
-                        ), full_screen=True
+                        ui.layout_columns(
+                            ui.input_slider("classe", "Nombre de classes:",
+                                min=1, max=10, value=5),
+                            ui.panel_conditional(f"'{T_F}' === 'True' ", 
+                                ui.input_checkbox("transfo", "Transformation axe")
+                            ), full_screen=True
+                        )
                     )
                 ),
-                ui.card(
-                    ui.card_header("Odds ratio (rapport de cotes):"),
-                    ui.output_data_frame("odds_table"), full_screen=True
+                ui.panel_conditional(f"'{list(reg().keys())[0]}' === 'Logist' ",
+                    ui.navset_card_underline(
+                        ui.nav_panel("Graphique", ui.output_plot("normalplot")),
+                        ui.nav_panel("Test", ui.output_text_verbatim("test_normal")),
+                        title="Hypothèse de normalité des résidus de déviance",
+                    ),
                 ),
-                col_widths=[6, 6, 6]
+                ui.panel_conditional(f"'{list(reg().keys())[0]}' === 'Logist' ",
+                    ui.card(
+                        ui.card_header("Points aberrants / atypiques"),
+                        output_widget("aberrantplot"), full_screen=True
+                    )
+                ),
+                ui.panel_conditional(f"'{list(reg().keys())[0]}' === 'Logist' ",
+                    ui.card(
+                        ui.card_header("Points leviers"),
+                        ui.output_text_verbatim("levier"),
+                        output_widget("levierplot"), full_screen=True
+                    ),
+                ),
+                ui.panel_conditional(f"'{list(reg().keys())[0]}' === 'Logist' ",
+                    ui.navset_card_underline(
+                        ui.nav_panel("Influence", ui.output_text_verbatim("influence")),
+                        ui.nav_panel("Distance de Cook", output_widget("cookplot")),
+                        title="Mesure d'influence"
+                    ),
+                ),
+                col_widths=[6, 6, 6, 6, 6, 6]
             )
         elif "MNlogit" in reg():
             return ui.layout_columns(
@@ -431,11 +503,11 @@ def server(input, output, session):
     
     @render_plotly
     def regplot():
-        return plot_reg(reg())
+        return plot_reg(reg(), dataf(), input.transfo())
     
     @render_plotly
     def logplot():
-        return plot_log(reg(), input.classe())
+        return plot_log(reg(), dataf(), input.classe(), input.transfo())
     
     @render_plotly
     def aberrantplot():
@@ -505,6 +577,10 @@ def server(input, output, session):
     @render.text
     def test_auto():
         return text_test_auto(reg())
+    
+    @render.text
+    def test_model():
+        return text_test_model()
 
 app = App(app_ui, server)
 app.run()

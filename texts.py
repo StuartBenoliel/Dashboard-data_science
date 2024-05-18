@@ -41,6 +41,28 @@ def text_influence():
     """.replace('\n    ', '\n')
     return explanation.strip()
 
+def text_test_model():
+
+    explanation = """
+    Le modèle saturé (ou modèle complet) est un modèle qui inclut un nombre 
+    maximal de paramètres permettant de prédire parfaitement les résultats 
+    observés. Ce modèle correspond à une situation où il y a un paramètre pour 
+    chaque observation distincte. Si toutes les observations x_i sont distinctes, 
+    sa log vraisemblance logL_sat = 0 (sinon <).
+
+    Le "test"/critère pratique d’indication de la qualité d’ajustement aux 
+    données est que la déviance D = -2*(logL_model - logL_sat) <= ñ - p 
+    (où ñ = nb obs distinctes, p = nb de paramètres).
+
+    Le test de significativité / test du rapport de vraisemblance teste si les 
+    paramètres sont tous nuls sauf la constante (H0). La stat de test est
+    LLR = D_null - D = -2*(logL_null - logL_model)
+    Si la p-valeur du test LLR est inférieure à un certain seuil 
+    (généralement 0.05), le modèle est significatif.
+    """.replace('\n    ', '\n')
+    
+    return explanation.strip() 
+
 
 def text_test_linearity(dict_reg):
     if "OLS" in dict_reg:
@@ -85,10 +107,18 @@ def text_test_linearity(dict_reg):
     
     
 def text_test_normal(dict_reg):
-    if "OLS" in dict_reg:
-        model = dict_reg['OLS']
-        shapiro_test = shapiro(model.resid)
-        t_statistic, p_value = ttest_1samp(model.resid, 0)
+    if any(value in dict_reg.keys() for value in ['OLS' ,'Logist']):
+        model = list(dict_reg.values())[0]
+        if "OLS" in dict_reg:
+            residuals = model.resid
+        else :
+            try:
+                residuals = model.resid_dev
+            except Exception as e:
+                residuals = model.resid_deviance
+
+        shapiro_test = shapiro(residuals)
+        t_statistic, p_value = ttest_1samp(residuals, 0)
 
         explanation = """
         Le test de Shapiro-Wilk teste l'hypothèse nulle selon laquelle l'échantillon 
