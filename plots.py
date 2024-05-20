@@ -118,6 +118,7 @@ def plot_log(dict_reg, data, bins, transfo):
 
         # Calculer la moyenne de model.model.endog_names pour chaque bin
         means = df.groupby('bin')[model.model.endog_names].mean()
+        print(means)
 
         data_emp = pd.DataFrame({
             'borne_inf': [df[df['bin'] == i][nom_x].min() for i in range(0, nb_bins)],
@@ -130,7 +131,7 @@ def plot_log(dict_reg, data, bins, transfo):
         pred_ci = model.get_prediction().summary_frame(alpha=0.05)
         pred_ci.columns = ['predicted', 'se', 'ci_lower', 'ci_upper']
 
-        fig.add_traces(go.Scatter(x=df[nom_x], y=pred_ci.predicted, name='Probabilité prédite'))
+        fig.add_traces(go.Scatter(x=df[nom_x], y=pred_ci.predicted, name='Valeur prédite'))
         
         fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
                         y=np.concatenate([pred_ci.ci_upper, pred_ci.ci_lower[::-1]]),
@@ -144,22 +145,134 @@ def plot_log(dict_reg, data, bins, transfo):
         fig.update_traces(marker=dict(color='white', line=dict(color='black', width=1)))
         fig.add_trace(go.Scatter(x=data_emp['borne_inf'], y=data_emp['proportion'], mode='markers', 
                                 showlegend=False, marker=dict(color='#F24B4B', size=6),
-                                name="Probabilité prédite par regroupement"))
+                                name="Prédiction par regroupement"))
         fig.add_trace(go.Scatter(x=data_emp['borne_sup'], y=data_emp['proportion'], mode='markers',
                                 showlegend=False, marker=dict(color='white', line=dict(color='#F24B4B', width=1)),
-                                name="Probabilité prédite par regroupement"))
+                                name="Prédiction par regroupement"))
         
         affichage = True
         for i in range(len(data_emp)):
             fig.add_trace(go.Scatter(x=[data_emp['borne_inf'][i], data_emp['borne_sup'][i]], 
                                     y=[data_emp['proportion'][i], data_emp['proportion'][i]], 
                                     mode='lines', line=dict(color='#F24B4B'), 
-                                    name="Probabilité prédite par regroupement", 
+                                    name="Prédiction par regroupement", 
                                     showlegend=affichage))
             affichage= False
             
         fig.update_layout(
                         template="plotly_white",
+                        legend=dict(
+                        orientation="h",
+                        x=0.5,
+                        y=1.1,
+                        xanchor='center',
+                        yanchor='middle'
+                        ))
+
+        return fig
+    
+def plot_log_ln(dict_reg, data, bins, transfo):
+    if any(value in dict_reg.keys() for value in ['Poisson', 'Bin_neg']):
+        model = list(dict_reg.values())[0]
+        X = model.model.exog[:, 1:2]
+        nom_x = model.model.exog_names[1]
+        df = pd.DataFrame({
+            nom_x: X.flatten(),
+            f'ln({model.model.endog_names})': np.log(model.model.endog)
+        })
+        if not transfo:
+                nom_x = extract_column_name(nom_x, data)
+                df = pd.DataFrame({
+                    nom_x: data[nom_x],
+                    f'ln({model.model.endog_names})': np.log(model.model.endog)
+                })
+        df = df.sort_values(by=nom_x).replace([np.inf, -np.inf], np.nan)
+        nb_bins = bins
+        bin_edges = np.linspace(df[nom_x].min(), df[nom_x].max(), nb_bins + 1)
+        bins = pd.cut(df[nom_x], bins=bin_edges, labels=False, include_lowest=True)
+        df['bin'] = bins
+        # Calculer la moyenne de model.model.endog_names pour chaque bin
+        means = df.groupby('bin')[f'ln({model.model.endog_names})'].mean()
+
+        data_emp = pd.DataFrame({
+            'borne_inf': [df[df['bin'] == i][nom_x].min() for i in range(0, nb_bins)],
+            'borne_sup': [df[df['bin'] == i][nom_x].max() for i in range(0, nb_bins)],
+            'proportion': means.values
+        })
+        data_emp = data_emp.dropna().reset_index()
+        fig = px.scatter(df, x=nom_x, y=f'ln({model.model.endog_names})')
+
+        pred_ci = model.get_prediction(linear=True).summary_frame(alpha=0.05)
+        pred_ci.columns = ['predicted', 'se', 'ci_lower', 'ci_upper']
+
+        fig.add_traces(go.Scatter(x=df[nom_x], y=pred_ci.predicted, name='Valeur prédite'))
+        
+        fig.add_trace(go.Scatter(x=np.concatenate([df[nom_x], df[nom_x][::-1]]),
+                        y=np.concatenate([pred_ci.ci_upper, pred_ci.ci_lower[::-1]]),
+                        fill='toself', opacity=0.3,
+                        fillcolor="#3854A6",
+                        name="IC régression 95%",
+                        line=dict(dash='dash'),
+                        showlegend=True))
+
+        fig.update_traces(line=dict(color="#3854A6"))
+        fig.update_traces(marker=dict(color='white', line=dict(color='black', width=1)))
+
+        fig.add_trace(go.Scatter(x=data_emp['borne_inf'], y=data_emp['proportion'], mode='markers', 
+                                showlegend=False, marker=dict(color='#F24B4B', size=6),
+                                name="Prédiction par regroupement"))
+        fig.add_trace(go.Scatter(x=data_emp['borne_sup'], y=data_emp['proportion'], mode='markers',
+                                showlegend=False, marker=dict(color='white', line=dict(color='#F24B4B', width=1)),
+                                name="Prédiction par regroupement"))
+        
+        affichage = True
+        for i in range(len(data_emp)):
+            fig.add_trace(go.Scatter(x=[data_emp['borne_inf'][i], data_emp['borne_sup'][i]], 
+                                    y=[data_emp['proportion'][i], data_emp['proportion'][i]], 
+                                    mode='lines', line=dict(color='#F24B4B'), 
+                                    name="Prédiction par regroupement", 
+                                    showlegend=affichage))
+            affichage = False
+            
+        fig.update_layout(
+                        template="plotly_white",
+                        legend=dict(
+                        orientation="h",
+                        x=0.5,
+                        y=1.1,
+                        xanchor='center',
+                        yanchor='middle'
+                        ))
+
+        return fig
+    
+def plot_log_multi(dict_reg, data, transfo):
+    if any(value in dict_reg.keys() for value in ['MNlogit', "Ordered"]):
+        model = list(dict_reg.values())[0]
+        if 'MNlogit' in dict_reg:
+            X = model.model.exog[:, 1:2]
+            nom_x = model.model.exog_names[1]
+        else :
+            X = model.model.exog[:, 0:1]
+            nom_x = model.model.exog_names[0]
+        df = pd.DataFrame({
+            nom_x: X.flatten()
+        })
+        if not transfo:
+                nom_x = extract_column_name(nom_x, data)
+                df = pd.DataFrame({
+                    nom_x: data[nom_x]
+                })
+        predicted = model.model.predict(model.params)
+
+        fig = go.Figure()
+        for col in range(len(predicted[0])):
+            fig.add_trace(go.Scatter(x=df[nom_x], y=[row[col] for row in predicted], mode='lines', name=f'P(Y={col+1})'))
+            
+        fig.update_layout(
+                        template="plotly_white",
+                        xaxis=dict(title=nom_x),
+                        yaxis=dict(title='Probabilité prédite'),
                         legend=dict(
                         orientation="h",
                         x=0.5,

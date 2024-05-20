@@ -3,6 +3,7 @@ import numpy as np
 
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+from scipy.stats import norm
 
 def table_summary(df):
   summary = df.describe()
@@ -42,3 +43,15 @@ def table_odds(dict_reg):
     }
   )
   return odds_ratios.iloc[1:]
+
+def table_seuils(dict_reg):
+  model = dict_reg['Ordered']
+  threshold_params = model.params[model.model.k_vars:]
+  threshold_values = model.model.transform_threshold_params(threshold_params)
+  threshold_values_rounded = np.round(threshold_values, 4)[1:-1]
+
+  threshold_df = pd.DataFrame({
+      'Intercept': threshold_params.index,
+      'Vraie coeff': threshold_values_rounded
+  })
+  return threshold_df

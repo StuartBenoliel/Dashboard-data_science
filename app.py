@@ -6,6 +6,7 @@ import statsmodels.formula.api as smf
 from shared import app_dir, data
 from shinywidgets import output_widget, render_plotly
 from shiny import App, reactive, render, ui
+from statsmodels.miscmodels.ordinal_model import OrderedModel
 
 import re
 from plots import *
@@ -182,7 +183,6 @@ def server(input, output, session):
     def handle_file():
         upload_state.set(True)
         column_names = dataf().columns.tolist()
-        print(column_names)
         init_var_x = column_names[0]
         init_var_y = column_names[1]
         quant = {col: col for col in type_var()["quant"]}
@@ -297,9 +297,10 @@ def server(input, output, session):
             ui.update_selectize("fc_liens", 
                 choices = {"Logit": "Logit (régression logistique)", "Probit": "Probit", "Cloglog": "Cloglog", "Loglog": "Loglog"})
         if input.type_loi() == "Multinomiale":
-            ui.update_selectize("fc_liens", choices = {"Logit": "Logit (régression logistique)"})
+            ui.update_selectize("fc_liens", choices = {"Logit": "Logit (régression logistique nominal)", 
+                "Logit_2": "Logit (régression logistique cumulatif à odds proportionnels)"})
         if input.type_loi() in ["Poisson" , "Binomiale négative"]:
-            ui.update_selectize("fc_liens", choices = {"Log": "Log (régression log-linéaire)"})
+            ui.update_selectize("fc_liens", choices = {"Log": "Log (régression log-linéaire)", "Zero": "Modèle à inflation de zéros"})
     
     @render.ui  
     def reg_card():
@@ -371,14 +372,14 @@ def server(input, output, session):
                 col_widths=[6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
             )
         
-        elif any(value in reg() for value in ["Logist", "Poisson", "Bin_neg"]):
-            model = list(reg().values())[0]
-            X = set(extract_column_name(expression, data) for expression in model.model.exog_names[1:])
+        elif "Logist" in reg():
+            model = reg()['Logist']
+            X = set(extract_column_name(expression, dataf()) for expression in model.model.exog_names[1:])
             if len(model.model.exog_names[1:]) > 1:
                 T_F = False
             else:
                 nom_x = model.model.exog_names[1]
-                nom_x_b = extract_column_name(nom_x, data)
+                nom_x_b = extract_column_name(nom_x, dataf())
                 T_F = (nom_x != nom_x_b)
             #mfx = model.get_margeff()
             #print(mfx.summary())
@@ -386,58 +387,143 @@ def server(input, output, session):
                 ui.navset_card_underline(
                     ui.nav_panel("Résumé", ui.output_text_verbatim("summary_model"), 
                         ui.output_text_verbatim("test_model")),
-                    ui.nav_panel("Odds ratio", ui.output_data_frame("odds_table")),
+                    ui.nav_panel("Odds / Rate ratio", ui.output_data_frame("odds_table")),
                     title="Résultats du modèle:"
+                ),
+                ui.panel_conditional(f"{len(X)} === 1", 
+                    ui.navset_card_underline(
+                        ui.nav_panel("Probablité", 
+                            output_widget("logplot"),
+                            ui.layout_columns(
+                                ui.input_slider("classe", "Nombre de classes:",
+                                    min=1, max=10, value=5),
+                                ui.panel_conditional(f"'{T_F}' === 'True' ", 
+                                    ui.input_checkbox("transfo", "Transformation axe")
+                                ), full_screen=True
+                            )
+                        ),title="Courbe",
+                    ),
+                ),
+                ui.navset_card_underline(
+                    ui.nav_panel("Graphique", ui.output_plot("normalplot")),
+                    ui.nav_panel("Test", ui.output_text_verbatim("test_normal")),
+                    title="Hypothèse de normalité des résidus de déviance",
+                ),
+                ui.card(
+                    ui.card_header("Points aberrants / atypiques"),
+                    output_widget("aberrantplot"), full_screen=True
+                ),
+                ui.card(
+                    ui.card_header("Points leviers"),
+                    ui.output_text_verbatim("levier"),
+                    output_widget("levierplot"), full_screen=True
+                ),
+                ui.navset_card_underline(
+                    ui.nav_panel("Influence", ui.output_text_verbatim("influence")),
+                    ui.nav_panel("Distance de Cook", output_widget("cookplot")),
+                    title="Mesure d'influence" 
+                ),
+                col_widths=[6, 6, 6, 6, 6, 6]
+            )
+        
+        elif any(value in reg() for value in ["Poisson", "Bin_neg"]):
+            model = list(reg().values())[0]
+            X = set(extract_column_name(expression, dataf()) for expression in model.model.exog_names[1:])
+            print(model.model.exog_names[1:])
+            if len(model.model.exog_names[1:]) > 1:
+                T_F = False
+            else:
+                nom_x = model.model.exog_names[1]
+                nom_x_b = extract_column_name(nom_x, dataf())
+                T_F = (nom_x != nom_x_b)
+            #mfx = model.get_margeff()
+            #print(mfx.summary())
+            return ui.layout_columns(
+                ui.navset_card_underline(
+                    ui.nav_panel("Résumé", ui.output_text_verbatim("summary_model"), 
+                        ui.output_text_verbatim("test_model")),
+                    ui.nav_panel("Odds / Rate ratio", ui.output_data_frame("odds_table")),
+                    title="Résultats du modèle:"
+                ),
+                ui.panel_conditional(f"{len(X)} === 1", 
+                    ui.navset_card_underline(
+                        ui.nav_panel("E(Y|X)", 
+                            output_widget("logplot"),
+                            ui.layout_columns(
+                                ui.input_slider("classe", "Nombre de classes:",
+                                    min=1, max=10, value=5),
+                                ui.panel_conditional(f"'{T_F}' === 'True' ", 
+                                    ui.input_checkbox("transfo", "Transformation axe")
+                                ), full_screen=True
+                            )
+                        ),
+                        ui.nav_panel("ln(E(Y|X))", 
+                            output_widget("loglnplot"),
+                            ui.layout_columns(
+                                ui.input_slider("classe", "Nombre de classes:",
+                                    min=1, max=10, value=5),
+                                ui.panel_conditional(f"'{T_F}' === 'True' ", 
+                                    ui.input_checkbox("transfo", "Transformation axe")
+                                ), full_screen=True
+                            )
+                        ), title="Courbe",
+                    ),
+                ),
+                col_widths=[6, 6]
+            )
+        elif "MNlogit" in reg():
+            model = list(reg().values())[0]
+            X = set(extract_column_name(expression, dataf()) for expression in model.model.exog_names[1:])
+            if len(model.model.exog_names[1:]) > 1:
+                T_F = False
+            else:
+                nom_x = model.model.exog_names[1]
+                nom_x_b = extract_column_name(nom_x, dataf())
+                T_F = (nom_x != nom_x_b)
+            return ui.layout_columns(
+                ui.card(
+                    ui.card_header("Résumé statistique du modèle:"),
+                    ui.output_text_verbatim("summary_model"), 
+                    ui.output_text_verbatim("test_model"), full_screen=True
                 ),
                 ui.panel_conditional(f"{len(X)} === 1", 
                     ui.card(
                         ui.card_header("Courbe:"),
-                        output_widget("logplot"),
-                        ui.layout_columns(
-                            ui.input_slider("classe", "Nombre de classes:",
-                                min=1, max=10, value=5),
-                            ui.panel_conditional(f"'{T_F}' === 'True' ", 
-                                ui.input_checkbox("transfo", "Transformation axe")
-                            ), full_screen=True
-                        )
+                        output_widget("log_multiplot"),
+                        ui.panel_conditional(f"'{T_F}' === 'True' ", 
+                            ui.input_checkbox("transfo", "Transformation axe")
+                        ), full_screen=True
                     )
                 ),
-                ui.panel_conditional(f"'{list(reg().keys())[0]}' === 'Logist' ",
-                    ui.navset_card_underline(
-                        ui.nav_panel("Graphique", ui.output_plot("normalplot")),
-                        ui.nav_panel("Test", ui.output_text_verbatim("test_normal")),
-                        title="Hypothèse de normalité des résidus de déviance",
-                    ),
-                ),
-                ui.panel_conditional(f"'{list(reg().keys())[0]}' === 'Logist' ",
-                    ui.card(
-                        ui.card_header("Points aberrants / atypiques"),
-                        output_widget("aberrantplot"), full_screen=True
-                    )
-                ),
-                ui.panel_conditional(f"'{list(reg().keys())[0]}' === 'Logist' ",
-                    ui.card(
-                        ui.card_header("Points leviers"),
-                        ui.output_text_verbatim("levier"),
-                        output_widget("levierplot"), full_screen=True
-                    ),
-                ),
-                ui.panel_conditional(f"'{list(reg().keys())[0]}' === 'Logist' ",
-                    ui.navset_card_underline(
-                        ui.nav_panel("Influence", ui.output_text_verbatim("influence")),
-                        ui.nav_panel("Distance de Cook", output_widget("cookplot")),
-                        title="Mesure d'influence"
-                    ),
-                ),
-                col_widths=[6, 6, 6, 6, 6, 6]
+                col_widths=[6, 6]
             )
-        elif "MNlogit" in reg():
+        elif "Ordered" in reg():
+            model = list(reg().values())[0]
+            X = set(extract_column_name(expression, dataf()) for expression in model.model.exog_names[:-(len(np.unique(model.endog)) -1)])
+            if len(model.model.exog_names[:-(len(np.unique(model.endog)) -1)]) > 1:
+                T_F = False
+            else:
+                nom_x = model.model.exog_names[0]
+                nom_x_b = extract_column_name(nom_x, dataf())
+                T_F = (nom_x != nom_x_b)
             return ui.layout_columns(
                 ui.card(
                     ui.card_header("Résumé statistique du modèle:"),
-                    ui.output_text_verbatim("summary_model"), full_screen=True
+                    ui.output_text_verbatim("summary_model"),
+                    ui.output_text_verbatim("test_model"), 
+                    ui.output_text_verbatim("model_ordered"),
+                    ui.output_data_frame("seuils_table"), full_screen=True
                 ),
-                col_widths=[6]
+                ui.panel_conditional(f"{len(X)} === 1", 
+                    ui.card(
+                        ui.card_header("Courbe:"),
+                        output_widget("log_multiplot"),
+                        ui.panel_conditional(f"'{T_F}' === 'True' ", 
+                            ui.input_checkbox("transfo", "Transformation axe")
+                        ), full_screen=True
+                    )
+                ),
+                col_widths=[6, 6]
             )
     
     @reactive.calc
@@ -468,15 +554,25 @@ def server(input, output, session):
                     dico = {'Logist': model}
             
                 elif input.type_loi() == "Multinomiale":
-                    model = smf.mnlogit(f'{input.equation()}', data=data_copy).fit()
-                    dico = {'MNlogit': model}
+                    if input.fc_liens() == "Logit":
+                        model = smf.mnlogit(f'{input.equation()}', data=data_copy).fit()
+                        dico = {'MNlogit': model}
+                    if input.fc_liens() == "Logit_2":
+                        model = OrderedModel.from_formula(f'{input.equation()}', data=data_copy, distr='logit').fit()
+                        dico = {'Ordered': model}
 
                 elif input.type_loi() == "Poisson":
-                    model = smf.poisson(f'{input.equation()}', data=data_copy).fit()
+                    if input.fc_liens() == "Log":
+                        model = smf.poisson(f'{input.equation()}', data=dataf()).fit()
+                    if input.fc_liens() == "Zero":
+                        model = sm.ZeroInflatedPoisson.from_formula(f'{input.equation()}', data=dataf()).fit()
                     dico = {'Poisson': model}
 
                 elif input.type_loi() == "Binomiale négative":
-                    model = smf.negativebinomial(f'{input.equation()}', data=data_copy).fit()
+                    if input.fc_liens() == "Log":
+                        model = smf.negativebinomial(f'{input.equation()}', data=dataf()).fit()
+                    if input.fc_liens() == "Zero":
+                        model = sm.ZeroInflatedNegativeBinomialP.from_formula(f'{input.equation()}', data=dataf()).fit()
                     dico = {'Bin_neg': model}
 
         except Exception as e:
@@ -500,6 +596,11 @@ def server(input, output, session):
     def odds_table():
         if any(value in reg() for value in ['Logist', 'Poisson', 'Bin_neg']):
             return render.DataGrid(table_odds(reg()))
+        
+    @render.data_frame
+    def seuils_table():
+        if "Ordered" in reg():
+            return render.DataGrid(table_seuils(reg()))
     
     @render_plotly
     def regplot():
@@ -508,6 +609,14 @@ def server(input, output, session):
     @render_plotly
     def logplot():
         return plot_log(reg(), dataf(), input.classe(), input.transfo())
+    
+    @render_plotly
+    def log_multiplot():
+        return plot_log_multi(reg(), dataf(), input.transfo())
+    
+    @render_plotly
+    def loglnplot():
+        return plot_log_ln(reg(), dataf(), input.classe(), input.transfo())
     
     @render_plotly
     def aberrantplot():
@@ -547,6 +656,10 @@ def server(input, output, session):
     
     @render.text
     def summary_model():
+        if "Ordered" in reg():
+            model = reg()['Ordered']
+            additional_info = f"\n\nLog-Likelihood Null: {model.llnull}\nLikelihood Ratio Test p-value: {model.llr_pvalue}"
+            return str(reg()["Ordered"].summary()) + additional_info
         if len(reg().values()) != 0:
             return list(reg().values())[0].summary2()
     
@@ -581,6 +694,10 @@ def server(input, output, session):
     @render.text
     def test_model():
         return text_test_model()
+    
+    @render.text
+    def model_ordered():
+        return text_model_ordered()
 
 app = App(app_ui, server)
 app.run()
