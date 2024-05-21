@@ -67,7 +67,7 @@ def text_model_ordered():
 
     explanation = """
     Attention : Dans ce modèle logistique ordonné, le modèle est de la forme
-    log(P(Y<=j) = Bj -n1*X1 -n2*X2. Les seuils Bj déterminent les points où la 
+    log(P(Y<=j)) = Bj -n1*X1 -n2*X2. Les seuils Bj déterminent les points où la 
     probabilité cumulative d'une catégorie passe d'une catégorie à la suivante. 
     Le premier seuil est sa valeur tandis que les seuils suivants sont les 
     incréments cumulatifs exponentiés. Ex : τ_2 = τ_1 + exp(δ_2).

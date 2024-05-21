@@ -7,6 +7,7 @@ from shared import app_dir, data
 from shinywidgets import output_widget, render_plotly
 from shiny import App, reactive, render, ui
 from statsmodels.miscmodels.ordinal_model import OrderedModel
+from patsy import dmatrices
 
 import re
 from plots import *
@@ -404,6 +405,10 @@ def server(input, output, session):
                         ),title="Courbe",
                     ),
                 ),
+                ui.card(
+                    ui.card_header("Distribution"),
+                    ui.output_plot("logdistribplot"), full_screen=True
+                ),
                 ui.navset_card_underline(
                     ui.nav_panel("Graphique", ui.output_plot("normalplot")),
                     ui.nav_panel("Test", ui.output_text_verbatim("test_normal")),
@@ -423,13 +428,12 @@ def server(input, output, session):
                     ui.nav_panel("Distance de Cook", output_widget("cookplot")),
                     title="Mesure d'influence" 
                 ),
-                col_widths=[6, 6, 6, 6, 6, 6]
+                col_widths=[6, 6, 6, 6, 6, 6, 6]
             )
         
         elif any(value in reg() for value in ["Poisson", "Bin_neg"]):
             model = list(reg().values())[0]
             X = set(extract_column_name(expression, dataf()) for expression in model.model.exog_names[1:])
-            print(model.model.exog_names[1:])
             if len(model.model.exog_names[1:]) > 1:
                 T_F = False
             else:
@@ -469,7 +473,11 @@ def server(input, output, session):
                         ), title="Courbe",
                     ),
                 ),
-                col_widths=[6, 6]
+                ui.card(
+                    ui.card_header("Distribution"),
+                    ui.output_plot("logdistribplot"), full_screen=True
+                ),
+                col_widths=[6, 6, 6]
             )
         elif "MNlogit" in reg():
             model = list(reg().values())[0]
@@ -495,7 +503,11 @@ def server(input, output, session):
                         ), full_screen=True
                     )
                 ),
-                col_widths=[6, 6]
+                ui.card(
+                    ui.card_header("Distribution"),
+                    ui.output_plot("logdistribplot"), full_screen=True
+                ),
+                col_widths=[6, 6, 6]
             )
         elif "Ordered" in reg():
             model = list(reg().values())[0]
@@ -523,7 +535,11 @@ def server(input, output, session):
                         ), full_screen=True
                     )
                 ),
-                col_widths=[6, 6]
+                ui.card(
+                    ui.card_header("Distribution"),
+                    ui.output_plot("logdistribplot"), full_screen=True
+                ),
+                col_widths=[6, 6, 6]
             )
     
     @reactive.calc
@@ -533,11 +549,11 @@ def server(input, output, session):
                 model = smf.ols(f'{input.equation()}', data=dataf()).fit()
                 dico = {'OLS': model}
             else:
-                data_copy = dataf().copy()
-                var_y = input.equation().split('~')[0].strip()
-                data_copy[var_y] = dataf()[var_y].astype('category').cat.codes
 
                 if input.type_loi() == "Bernoulli":
+                    data_copy = dataf().copy()
+                    var_y = input.equation().split('~')[0].strip()
+                    data_copy[var_y] = dataf()[var_y].astype('category').cat.codes
                     if input.fc_liens() == "Logit":
                         model = smf.logit(f'{input.equation()}', data=data_copy).fit()
                     if input.fc_liens() == "Probit":
@@ -554,11 +570,15 @@ def server(input, output, session):
                     dico = {'Logist': model}
             
                 elif input.type_loi() == "Multinomiale":
+                    data_copy = dataf().copy()
+                    var_y = input.equation().split('~')[0].strip()
+                    data_copy[var_y]= pd.Categorical(dataf()[var_y], ordered=True)
                     if input.fc_liens() == "Logit":
-                        model = smf.mnlogit(f'{input.equation()}', data=data_copy).fit()
+                        _, X = dmatrices(input.equation(), data=data_copy, return_type='dataframe')
+                        model = sm.MNLogit(data_copy[var_y], X).fit(maxiter=150)
                         dico = {'MNlogit': model}
                     if input.fc_liens() == "Logit_2":
-                        model = OrderedModel.from_formula(f'{input.equation()}', data=data_copy, distr='logit').fit()
+                        model = OrderedModel.from_formula(input.equation(), data=data_copy, distr='logit').fit()
                         dico = {'Ordered': model}
 
                 elif input.type_loi() == "Poisson":
@@ -570,16 +590,15 @@ def server(input, output, session):
 
                 elif input.type_loi() == "Binomiale négative":
                     if input.fc_liens() == "Log":
-                        model = smf.negativebinomial(f'{input.equation()}', data=dataf()).fit()
+                        model = smf.negativebinomial(f'{input.equation()}', data=dataf()).fit(maxiter=150)
                     if input.fc_liens() == "Zero":
-                        model = sm.ZeroInflatedNegativeBinomialP.from_formula(f'{input.equation()}', data=dataf()).fit()
+                        model = sm.ZeroInflatedNegativeBinomialP.from_formula(f'{input.equation()}', data=dataf()).fit(maxiter=150)
                     dico = {'Bin_neg': model}
 
         except Exception as e:
                 #print(e)
                 dico={}
                 pass
-
         return dico
     
     @render.data_frame
@@ -635,6 +654,10 @@ def server(input, output, session):
         return plot_dffits(reg())
     
     @render.plot
+    def logdistribplot(): 
+        return plot_log_distrib(reg(), dataf())
+    
+    @render.plot
     def linearplot(): 
         return plot_linear(reg())
         
@@ -656,9 +679,13 @@ def server(input, output, session):
     
     @render.text
     def summary_model():
+        if "MNlogit" in reg():
+            model = reg()['MNlogit']
+            additional_info = f"\n\nAIC: {round(model.aic,2)}   BIC: {round(model.bic,2)}"
+            return str(reg()["MNlogit"].summary()) + additional_info
         if "Ordered" in reg():
             model = reg()['Ordered']
-            additional_info = f"\n\nLog-Likelihood Null: {model.llnull}\nLikelihood Ratio Test p-value: {model.llr_pvalue}"
+            additional_info = f"\n\nLog-Likelihood Null: {round(model.llnull,2)}   Likelihood Ratio Test p-value: {round(model.llr_pvalue,2)}"
             return str(reg()["Ordered"].summary()) + additional_info
         if len(reg().values()) != 0:
             return list(reg().values())[0].summary2()

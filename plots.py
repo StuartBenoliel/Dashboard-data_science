@@ -118,7 +118,6 @@ def plot_log(dict_reg, data, bins, transfo):
 
         # Calculer la moyenne de model.model.endog_names pour chaque bin
         means = df.groupby('bin')[model.model.endog_names].mean()
-        print(means)
 
         data_emp = pd.DataFrame({
             'borne_inf': [df[df['bin'] == i][nom_x].min() for i in range(0, nb_bins)],
@@ -246,14 +245,52 @@ def plot_log_ln(dict_reg, data, bins, transfo):
 
         return fig
     
+def plot_log_distrib(dict_reg, data):
+    if any(value in dict_reg.keys() for value in ['Logist','MNlogit', "Ordered", 'Poisson', 'Bin_neg']):
+        model = list(dict_reg.values())[0]
+        if any(value in dict_reg.keys() for value in ['MNlogit', "Ordered"]):
+            pred = model.predict().argmax(1)
+            df = pd.DataFrame({
+                model.model.endog_names : model.model.endog,
+                'y_pred' : pred
+            })
+        else:
+            pred = model.predict()
+            df = pd.DataFrame({
+                model.model.endog_names : model.model.endog,
+                'y_pred' : np.round(pred)
+            })
+
+        endog_categories = pd.Categorical(data[model.model.endog_names], ordered=True).categories
+        df['correcte'] = df['y_pred'] == df[model.model.endog_names]
+        correct_counts = df['correcte'].groupby(df['y_pred']).value_counts(True)
+        correct_proportions = correct_counts.loc[:, True]
+        observed_counts = df[model.model.endog_names].value_counts(True).sort_index()
+        predicted_counts = df['y_pred'].value_counts(True).sort_index()
+        df = pd.DataFrame({'Freq': predicted_counts, 'Correct': correct_proportions})
+        df.fillna(0, inplace=True)
+        if any(value in dict_reg.keys() for value in ['MNlogit', "Ordered"]):
+            df.index=endog_categories[df.index]
+
+        fig = plt.figure()
+        plt.scatter(endog_categories,observed_counts.values, color='white',edgecolors='k',label='Observé', zorder=2)
+        plt.vlines(df.index, 0,df['Freq']*df['Correct'], color = 'green',linestyle= "--", alpha=0.6, label='Prédiction juste', zorder=1 )
+        plt.vlines(df.index, df['Freq']*df['Correct'],df['Freq'], color = 'red',linestyle= "--", alpha=0.6, label='Prédiction fausse', zorder=1)
+        plt.xlabel(model.model.endog_names)
+        plt.ylabel('Fréquence')
+        plt.ylim(bottom=0)
+        plt.legend(loc='upper right')
+
+        return fig
+    
 def plot_log_multi(dict_reg, data, transfo):
     if any(value in dict_reg.keys() for value in ['MNlogit', "Ordered"]):
         model = list(dict_reg.values())[0]
         if 'MNlogit' in dict_reg:
-            X = model.model.exog[:, 1:2]
+            X = model.model.exog[:, 1]
             nom_x = model.model.exog_names[1]
         else :
-            X = model.model.exog[:, 0:1]
+            X = model.model.exog[:, 0]
             nom_x = model.model.exog_names[0]
         df = pd.DataFrame({
             nom_x: X.flatten()
@@ -263,11 +300,14 @@ def plot_log_multi(dict_reg, data, transfo):
                 df = pd.DataFrame({
                     nom_x: data[nom_x]
                 })
-        predicted = model.model.predict(model.params)
+        predicted = model.predict()
+        endog_categories = pd.Categorical(data[model.model.endog_names], ordered=True).categories
 
         fig = go.Figure()
-        for col in range(len(predicted[0])):
-            fig.add_trace(go.Scatter(x=df[nom_x], y=[row[col] for row in predicted], mode='lines', name=f'P(Y={col+1})'))
+        for i, category in enumerate(endog_categories):
+            fig.add_trace(go.Scatter(x=df[nom_x], y=predicted[:, i], 
+                mode='lines', name=f'P({model.model.endog_names}={category})'
+            ))
             
         fig.update_layout(
                         template="plotly_white",
